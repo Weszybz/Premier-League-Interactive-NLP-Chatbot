@@ -1,6 +1,36 @@
 import requests
 import re
 
+# Expanded dictionary with Premier League team aliases
+team_aliases = {
+    "Manchester United": ["Man U", "Man Utd", "United", "Manchester U"],
+    "Manchester City": ["Man City", "City", "MCFC"],
+    "Arsenal": ["Gunners", "Arsenal FC"],
+    "Tottenham": ["Spurs", "Tottenham Hotspur"],
+    "Chelsea": ["Blues", "Chelsea FC"],
+    "Liverpool": ["Reds", "Liverpool FC"],
+    "Newcastle": ["Magpies", "Toon", "Newcastle United"],
+    "West Ham": ["Hammers", "West Ham United"],
+    "Aston Villa": ["Villa", "AVFC"],
+    "Wolves": ["Wolverhampton Wanderers"],
+    "Brighton": ["Brighton & Hove Albion", "Seagulls"],
+    "Leicester": ["Foxes", "Leicester City"],
+    "Crystal Palace": ["Palace", "Eagles"],
+    "Everton": ["Toffees", "Everton FC"],
+    "Southampton": ["Saints"],
+    "Nottingham Forest": ["Forest"],
+    "Leeds": ["Leeds United", "Whites"],
+    "Burnley": ["Clarets"],
+    "Sheffield United": ["Blades", "Sheffield"],
+    "Bournemouth": ["Cherries", "AFC Bournemouth"]
+}
+
+def map_alias_to_team_name(alias):
+    """Map a team alias to its full team name."""
+    for team, aliases in team_aliases.items():
+        if alias in aliases:
+            return team
+    return alias  # Return the original if no match is found
 
 def search_event(event_name, season=None):
     """Fetch match data between two teams for a given season."""
@@ -41,7 +71,6 @@ def search_event(event_name, season=None):
         for event in events
     ]
 
-
 def extract_match_info(user_input):
     """Extracts teams and year from user input."""
     match = re.search(r'(.+?)\s+vs\s+(.+?)\s+in\s+(\d{4})', user_input, re.IGNORECASE)
@@ -49,11 +78,12 @@ def extract_match_info(user_input):
     if match:
         team1, team2, year = match.groups()
         season = f"{year}-{int(year) + 1}"
-        team1 = team1.strip().replace(' ', '_')
-        team2 = team2.strip().replace(' ', '_')
+        team1 = map_alias_to_team_name(team1.strip())  # Map aliases to full names
+        team2 = map_alias_to_team_name(team2.strip())  # Map aliases to full names
+        team1 = team1.replace(' ', '_')
+        team2 = team2.replace(' ', '_')
         return team1, team2, season
     return None, None, None
-
 
 def chatbot():
     """Main chatbot function to handle user queries."""
@@ -82,7 +112,6 @@ def chatbot():
                     f"ChatBot: No matches found for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')} in {season}.")
         else:
             print("ChatBot: Please provide the query in the format 'team1 vs team2 in year'.")
-
 
 # Example usage
 if __name__ == "__main__":
