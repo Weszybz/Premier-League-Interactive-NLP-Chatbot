@@ -4,7 +4,7 @@ import re
 
 def search_event(event_name, season=None):
     """Fetch match data between two teams for a given season."""
-    api_key = '3'  # Replace with your actual API key
+    api_key = '771766'  # Replace with your actual API key
     base_url = f'https://www.thesportsdb.com/api/v1/json/{api_key}/searchevents.php'
 
     def fetch_events(event_name, season):
@@ -70,13 +70,13 @@ def chatbot():
             events = search_event(f"{team1}_vs_{team2}", season)
             if events:
                 for event in events:
-                    print(f"Event: {event['home']} vs {event['away']}")
+                    print(f"\nEvent: {event['home']} vs {event['away']}")
                     print(f"League: {event['league']}")
                     print(f"Date: {event['date']}")
                     print(f"Time: {event['time']}")
                     print(f"Venue: {event['venue']}")
                     print(f"Score: {event['home_score']} - {event['away_score']}")
-                    print(f"Description: {event['description']}\n")
+                    print(f"Description: {event['description']}")
             else:
                 print(
                     f"ChatBot: No matches found for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')} in {season}.")
