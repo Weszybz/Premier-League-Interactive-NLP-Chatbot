@@ -1,11 +1,24 @@
 import re
+import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer, TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Load Q&A pairs from the CSV file
+def load_qa_pairs(file_path):
+    # Load the CSV file
+    data = pd.read_csv(file_path)
+    # Filter questions related to bonds and stocks
+    filtered_data = data[data['Question'].str.contains(r'\bstocks\b|\bbonds\b', case=False, na=False)]
+    # Create a dictionary of questions and answers
+    qa_dict = dict(zip(filtered_data['Question'].str.lower(), filtered_data['Answer']))
+    return qa_dict
+
+# Initialize Q&A pairs from the CSV
+qa_pairs = load_qa_pairs('COMP3074-CW1-Dataset.csv')
+
 # 1. Intent Classifier with Preprocessing
-# Training data with variations
 training_data = [
     ("Hi", "greeting"),
     ("Hello", "greeting"),
@@ -44,28 +57,12 @@ intent_pipeline = Pipeline([
 # Train intent classifier
 intent_pipeline.fit(processed_texts, labels)
 
-# 2. Identity Management
-user_name = None
-
-def set_user_name(name):
-    global user_name
-    user_name = name
-    return f"Hi {name}!"
-
-def get_user_name():
-    return f"Your name is {user_name}." if user_name else "I don't know your name yet."
-
-# 3. Question Answering
-qa_pairs = {
-    "what are stocks": "Stocks are shares of ownership in a company.",
-    "what are bonds": "Bonds are fixed-income investments representing a loan from an investor to a borrower.",
-    "what are stocks and bonds": "Stocks are ownership shares in a company, while bonds are fixed-income investments that represent loans from investors to borrowers."
-}
-
+# Generate TF-IDF vectors for Q&A pairs
 questions = list(qa_pairs.keys())
 tfidf_vectorizer = TfidfVectorizer().fit(questions)
 question_vectors = tfidf_vectorizer.transform(questions)
 
+# 3. Question Answering
 def answer_query(query):
     query = preprocess_input(query)  # Preprocess the query
     query_vector = tfidf_vectorizer.transform([query])
@@ -77,7 +74,7 @@ def answer_query(query):
 def small_talk_response(user_input):
     responses = {
         "how are you": "I'm just a bot, but I'm doing great! How about you?",
-        "hello": "Hello! How can I assist you today?",
+        "hello": "Hello! What's your name?",
         "hi": "Hi there! What's your name?",
         "what can you do": "I can answer questions, remember your name, and engage in small talk!",
         "bye": "Have a great day!",
@@ -106,6 +103,17 @@ def chatbot_response(user_input):
         return small_talk_response(user_input)
     else:
         return "I'm not sure how to help with that."
+
+# 2. Identity Management
+user_name = None
+
+def set_user_name(name):
+    global user_name
+    user_name = name
+    return f"Hi {name}!"
+
+def get_user_name():
+    return f"Your name is {user_name}." if user_name else "I don't know your name yet."
 
 # Example Conversation
 if __name__ == "__main__":
