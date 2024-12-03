@@ -383,9 +383,19 @@ def chatbot():
             print("ChatBot: Goodbye!")
             break
 
+        # If state is not empty, stay in the transaction flow
+        if state:
+            response = handle_turn(user_input, state)
+            print(f"ChatBot: {response}")
+
+            # Debugging: Show state after processing
+            print(f"Debug: Current State: {state}")
+            continue
+
         # Predict the intent
         user_input_cleaned = preprocess_input(user_input)
         intent = intent_pipeline.predict([user_input_cleaned])[0]
+        print(f"Debug: Predicted Intent: {intent}")
         handled = False  # Tracks whether the intent was successfully handled
 
         # Determine query type based on user input
@@ -427,10 +437,13 @@ def chatbot():
                     print(f"ChatBot: Your name is {user_name}, and your favorite team is {favorite_team}.")
                 handled = True
 
-        if intent == "book_ticket" and not handled:
+                # Booking Intent
+        if intent == "book_ticket":
             response = handle_turn(user_input, state)
             print(f"ChatBot: {response}")
             handled = True
+            print(f"Debug: Current State: {state}")
+            continue
 
 
         # Handle next_fixture intent
