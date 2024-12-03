@@ -3,6 +3,7 @@ import re
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
+from dateutil.parser import parse
 
 user_database = {
     "Wesley": {"team": "Chelsea"}
@@ -32,6 +33,17 @@ team_aliases = {
     "Bournemouth": ["Cherries", "AFC Bournemouth"]
 }
 
+dialogue_state = {
+    "current_intent": None,
+    "team1": None,
+    "team2": None,
+    "date": None,
+    "seating_type": None,
+    "num_tickets": None,
+    "ticket_available": False,
+    "pending_task": None,  # e.g., "ask_for_seating" or "confirm_booking"
+}
+
 # Training data for intent classification
 training_data = [
     ("Chelsea vs Arsenal", "current_season"),
@@ -57,8 +69,13 @@ training_data = [
     ("Scores for Arsenal vs Tottenham in 2015", "past_season"),
     ("Show me past matches between Chelsea and Arsenal in 2020", "past_season"),
 
+    # User Info
     ("What is my name?", "user_info"),
+    ("Can you tell me my name?", "user_info"),
+    ("What team do I support?", "user_info"),
+    ("Do you know my name?", "user_info"),
     ("What is my favorite team?", "user_info"),
+
     ("When is the next fixture?", "next_fixture"),
     ("Show me the next match", "next_fixture"),
     ("What is the next game?", "next_fixture"),
@@ -77,16 +94,25 @@ training_data = [
     ("Current season matches", "current_season"),
     ("Show me the fixtures for this season", "current_season"),
     ("What were the results in 2022?", "past_season"),
-    ("Show results for last season", "past_season")
+    ("Show results for last season", "past_season"),
+    # Booking examples
+    ("I want to book tickets for Chelsea vs Arsenal on 2024-12-15", "book_ticket"),
+    ("Book tickets for Liverpool vs Manchester United", "book_ticket"),
+    ("Reserve 2 tickets for Tottenham vs Man City on 2023-11-20", "book_ticket"),
+    ("Can I book a VIP ticket for Arsenal vs Chelsea?", "book_ticket"),
+    ("I need tickets for Brighton vs Spurs", "book_ticket"),
+    ("Buy tickets for Chelsea game", "book_ticket"),
+    ("I want to book a match ticket for Liverpool", "book_ticket")
 ]
 
 texts, labels = zip(*training_data)
 
 # Preprocess function
 def preprocess_input(text):
-    """Preprocess input text by converting to lowercase and removing punctuation."""
+    """Preprocess input text by converting to lowercase and removing unnecessary punctuation."""
     text = text.lower().strip()
-    return re.sub(r'[^\w\s]', '', text)  # Removes all non-alphanumeric and non-space characters
+    # Keep numbers and alphanumeric characters (useful for dates and ticket counts)
+    return re.sub(r'[^\w\s\d]', '', text)  # Remove non-alphanumeric characters except spaces
 
 # Pipeline for intent classification
 intent_pipeline = Pipeline([
@@ -147,37 +173,51 @@ def search_event(event_name, season=None, query_type="both"):
         return sorted_events[:2] if not season else sorted_events
 
 def extract_match_info(user_input):
-    """Extract teams and optionally a year from user input, ignoring unnecessary phrases."""
-    # Remove unnecessary phrases before extracting team names
+    """Extract teams and optionally a year or date from user input."""
+    # Normalize the input by removing booking-related phrases
     normalized_input = re.sub(
-        r'\b(fixtures? with|scores?|results? for|game of|match between|game between|when did|when|will|the|game|show|find|recent)\b',
+        r'\b(i want to book|book|tickets?|for|on|match|game|play|fixtures?|results?|when did|when will|the|show|find|recent|in)\b',
         '',
         user_input,
         flags=re.IGNORECASE
     ).strip()
 
-    # Convert "and" to "vs" for compatibility
+    # Extract date in the format YYYY-MM-DD, YYYYMMDD, or year (e.g., 2017 or written dates)
+    date_match = re.search(r'\b(\d{4}-\d{2}-\d{2}|\d{8}|\d{4}|(?:\d{1,2}(?:st|nd|rd|th)?\s\w+\s\d{4}))\b', normalized_input)
+    extracted_date = None
+    season = None
+
+    if date_match:
+        date_text = date_match.group(0)
+        try:
+            if len(date_text) == 4:  # Handle standalone year as a season
+                season = f"{date_text}-{int(date_text) + 1}"
+            else:
+                # Parse natural language or standard dates
+                parsed_date = parse(date_text, fuzzy=True)
+                extracted_date = parsed_date.strftime('%Y-%m-%d')
+            normalized_input = normalized_input.replace(date_text, '').strip()  # Remove date/season from input
+        except ValueError:
+            pass  # Ignore invalid date parsing
+
+    # Convert "and" or "play" to "vs" for compatibility
     normalized_input = normalized_input.replace(" and ", " vs ")
     normalized_input = normalized_input.replace(" play ", " vs ")
 
-    # Match patterns with and without a year
-    match_with_year = re.search(r'(.+?)\s+vs\s+(.+?)\s+in\s+(\d{4})', normalized_input, re.IGNORECASE)
-    match_without_year = re.search(r'(.+?)\s+vs\s+(.+)', normalized_input, re.IGNORECASE)
+    # Extract teams from the remaining input
+    match_teams = re.search(r'(.+?)\s+vs\s+(.+)', normalized_input, re.IGNORECASE)
+    team1, team2 = None, None
 
-    if match_with_year:
-        team1, team2, year = match_with_year.groups()
-        season = f"{year}-{int(year) + 1}"
-    elif match_without_year:
-        team1, team2 = match_without_year.groups()
-        season = None  # Current season implied
-    else:
-        return None, None, None
+    if match_teams:
+        team1, team2 = match_teams.groups()
 
     # Map aliases to full team names
-    team1 = map_alias_to_team_name(team1.strip()).replace(' ', '_')
-    team2 = map_alias_to_team_name(team2.strip()).replace(' ', '_')
-    return team1, team2, season
+    if team1:
+        team1 = map_alias_to_team_name(team1.strip()).replace(' ', '_')
+    if team2:
+        team2 = map_alias_to_team_name(team2.strip()).replace(' ', '_')
 
+    return team1, team2, extracted_date or season
 
 def detect_name_statement(user_input):
     """Detect if the user is providing their name or asking about their stored name."""
@@ -226,11 +266,116 @@ def get_next_fixture_by_id(team_id):
     return None
 
 
+def handle_turn(user_input, state):
+    """Handle a single turn of the conversation."""
+    # Preprocess input
+    user_input_cleaned = preprocess_input(user_input)
+    print(f"Debug: Current State Before Processing: {state}")
+    print(f"Debug: Cleaned User Input: {user_input_cleaned}")
+
+    # Step 1: Handle Pending Task if Active
+    if state.get("pending_task"):
+        task = state["pending_task"]
+        print(f"Debug: Handling Pending Task: {task}")
+
+        if task == "ask_for_date":
+            try:
+                parsed_date = parse(user_input_cleaned, fuzzy=True).strftime('%Y-%m-%d')
+                state["date"] = parsed_date
+                state["pending_task"] = "ask_for_seating"
+                print(f"Debug: Date Parsed Successfully: {parsed_date}")
+                return (
+                    f"Tickets are available for {state['team1'].replace('_', ' ')} vs {state['team2'].replace('_', ' ')} "
+                    f"on {parsed_date}. What seating type would you like (VIP or regular)?")
+            except ValueError:
+                print(f"Debug: Failed to Parse Date: {user_input_cleaned}")
+                return "I couldn't understand the date. Please provide it in a format like 'December 15, 2024' or '2024-12-15'."
+
+        elif task == "ask_for_seating":
+            seating_type = extract_seating_type(user_input_cleaned)
+            if seating_type:
+                state["seating_type"] = seating_type
+                state["pending_task"] = "ask_for_num_tickets"
+                print(f"Debug: Seating Type Selected: {seating_type}")
+                return f"How many {seating_type} tickets would you like?"
+            return "Please specify a seating type (VIP or regular)."
+
+        elif task == "ask_for_num_tickets":
+            num_tickets = extract_num_tickets(user_input_cleaned)
+            if num_tickets:
+                state["num_tickets"] = num_tickets
+                state["pending_task"] = "confirm_booking"
+                print(f"Debug: Number of Tickets Selected: {num_tickets}")
+                return (f"Just to confirm, you want {num_tickets} {state['seating_type']} tickets for "
+                        f"{state['team1'].replace('_', ' ')} vs {state['team2'].replace('_', ' ')} "
+                        f"on {state['date']}. Is that correct?")
+            return "Please specify the number of tickets."
+
+        elif task == "confirm_booking":
+            if "yes" in user_input_cleaned or "confirm" in user_input_cleaned:
+                state.clear()
+                print("Debug: Booking Confirmed")
+                return "Great! Your booking is confirmed. You will receive your tickets via email. Enjoy the match!"
+            elif "no" in user_input_cleaned or "cancel" in user_input_cleaned:
+                state.clear()
+                print("Debug: Booking Canceled")
+                return "Your booking has been canceled."
+            return "Please confirm your booking by saying 'yes' or cancel by saying 'no'."
+
+        print(f"Debug: Unrecognized Pending Task: {task}")
+        return "Something went wrong. Can you start over?"
+
+    # Step 2: Predict Intent if No Pending Task
+    intent = intent_pipeline.predict([user_input_cleaned])[0]
+    state["current_intent"] = intent
+    print(f"Debug: Predicted Intent: {intent}")
+
+    if intent == "book_ticket":
+        # Extract match details
+        team1, team2, date = extract_match_info(user_input_cleaned)
+        state.update({"team1": team1, "team2": team2, "date": date})
+
+        if not team1 or not team2:
+            state["pending_task"] = "ask_for_teams"
+            return "Which teams are you booking tickets for?"
+        if not date:
+            state["pending_task"] = "ask_for_date"
+            return "Which date is the match on?"
+
+        state["pending_task"] = "ask_for_seating"
+        return (f"Tickets are available for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')} "
+                f"on {date}. What seating type would you like (VIP or regular)?")
+
+    # Step 3: Fallback for Unrecognized Input
+    return "I didn't understand that. Can you rephrase?"
+
+
+# Helper functions
+def extract_seating_type(user_input):
+    """Extract seating type from user input."""
+    if "vip" in user_input.lower():
+        return "VIP"
+    elif "regular" in user_input.lower():
+        return "regular"
+    return None
+
+
+def extract_num_tickets(user_input):
+    """Extract number of tickets from user input."""
+    match = re.search(r'\b(\d+)\b', user_input)  # Match any number in the input
+    return int(match.group(1)) if match else None
+
+def check_ticket_availability(team1, team2, date):
+    """Simulate checking ticket availability."""
+    # For simplicity, assume all tickets are available
+    return True
+
 # Chatbot function with intents
 def chatbot():
     """Main chatbot function to handle user queries."""
     print("ChatBot: Welcome to the Football Match Info Bot!")
     user_name = None
+    state = {}
 
     while True:
         user_input = input("You: ")
@@ -273,14 +418,20 @@ def chatbot():
                             print(", ".join(team_aliases.keys()))
                 handled = True
 
-        # Handle user_info intent
-        if intent == "user_info" and not handled:
-            if not user_name:
-                print("ChatBot: I don't know your name yet. Please tell me!")
-            else:
-                print(
-                    f"ChatBot: Your name is {user_name}, and your favorite team is {user_database[user_name]['team']}.")
+            # Handle user_info intent
+            if intent == "user_info" and not handled:
+                if not user_name:
+                    print("ChatBot: I don't know your name yet. Please tell me by saying 'My name is [Your Name]'.")
+                else:
+                    favorite_team = user_database.get(user_name, {}).get("team", "unknown")
+                    print(f"ChatBot: Your name is {user_name}, and your favorite team is {favorite_team}.")
+                handled = True
+
+        if intent == "book_ticket" and not handled:
+            response = handle_turn(user_input, state)
+            print(f"ChatBot: {response}")
             handled = True
+
 
         # Handle next_fixture intent
         if intent == "next_fixture" and not handled:
@@ -322,6 +473,7 @@ def chatbot():
         # Handle match-related queries
         if intent in ["current_season", "past_season"] and not handled:
             team1, team2, season = extract_match_info(user_input_cleaned)
+            print(f"Debug: Extracted Team1: {team1}, Team2: {team2}, Season: {season}")
             if team1 and team2:
                 team1 = map_alias_to_team_name(team1).replace(" ", "_")
                 team2 = map_alias_to_team_name(team2).replace(" ", "_")
@@ -350,7 +502,10 @@ def chatbot():
             print("ChatBot: I didn't understand that. Try asking about matches, fixtures, or your name.")
 
             # Debug: Print intent for verification
+        print(f"Debug: Current State: {state}")
+        print(f"Debug: Cleaned User Input: '{user_input_cleaned}'")
         print(f"Debug: User Input: '{user_input}' - Predicted Intent: '{intent}'")
+
 # Example usage
 if __name__ == "__main__":
     chatbot()
