@@ -273,6 +273,11 @@ def handle_turn(user_input, state):
     print(f"Debug: Current State Before Processing: {state}")
     print(f"Debug: Cleaned User Input: {user_input_cleaned}")
 
+    # Check for exit or cancel command
+    if user_input_cleaned in ["exit", "cancel"]:
+        state.clear()
+        return "Transaction canceled. Let me know if you need help with anything else!"
+
     # Step 1: Handle Pending Task if Active
     if state.get("pending_task"):
         task = state["pending_task"]
@@ -322,6 +327,19 @@ def handle_turn(user_input, state):
                 return "Your booking has been canceled."
             return "Please confirm your booking by saying 'yes' or cancel by saying 'no'."
 
+        elif task == "confirm_next_match":
+            if "yes" in user_input_cleaned or "confirm" in user_input_cleaned:
+                state["pending_task"] = "ask_for_seating"
+                print("Debug: Match Confirmed - Proceeding to Seating Selection")
+                return (
+                    f"What seating type would you like (VIP or regular)?")
+            elif "no" in user_input_cleaned or "cancel" in user_input_cleaned:
+                state.clear()
+                print("Debug: Booking Canceled")
+                return "Your booking has been canceled. Let me know if I can help with anything else!"
+            else:
+                return "Please confirm your booking by saying 'yes' or cancel by saying 'no'."
+
         print(f"Debug: Unrecognized Pending Task: {task}")
         return "Something went wrong. Can you start over?"
 
@@ -332,19 +350,29 @@ def handle_turn(user_input, state):
 
     if intent == "book_ticket":
         # Extract match details
-        team1, team2, date = extract_match_info(user_input_cleaned)
-        state.update({"team1": team1, "team2": team2, "date": date})
+        team1, team2, _ = extract_match_info(user_input_cleaned)
 
         if not team1 or not team2:
             state["pending_task"] = "ask_for_teams"
-            return "Which teams are you booking tickets for?"
-        if not date:
-            state["pending_task"] = "ask_for_date"
-            return "Which date is the match on?"
+            return "I couldn't identify valid teams. Please provide valid team names like 'Chelsea vs Arsenal'."
 
-        state["pending_task"] = "ask_for_seating"
-        return (f"Tickets are available for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')} "
-                f"on {date}. What seating type would you like (VIP or regular)?")
+        # Fetch the next match
+        state.update({"team1": team1, "team2": team2})
+        event_name = f"{team1}_vs_{team2}"
+        next_match = search_event(event_name, query_type="future")
+
+        if next_match:
+            match = next_match[0]
+            state.update({
+                "date": match.get('dateEvent', 'Unknown'),
+                "venue": match.get('strVenue', 'Unknown'),
+                "pending_task": "confirm_next_match"
+            })
+            return (f"{team1.replace('_', ' ')} and {team2.replace('_', ' ')} are next playing at "
+                    f"{state['venue']} on {state['date']}. Would you like to book these tickets?")
+        else:
+            state["pending_task"] = "ask_for_date"
+            return f"I couldn't find the next match for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')}. When is the match?"
 
     # Step 3: Fallback for Unrecognized Input
     return "I didn't understand that. Can you rephrase?"
