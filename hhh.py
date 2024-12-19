@@ -3,10 +3,8 @@ import re
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from nltk.corpus import stopwords
-from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
-import nltk
-nltk.download('stopwords')
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import classification_report, confusion_matrix
 
 from dateutil.parser import parse
 import joblib
@@ -75,8 +73,7 @@ training_data = [
     ("Show me past matches between Chelsea and Arsenal in 2020", "past_season"),
 
     # User Info
-    ("What is my name?", "user_info"),
-    ("What is my name?", "user_info"),
+    ("My name is Wesley", "introduce_name"),
     ("What is my name?", "user_info"),
     ("Can you tell me my name?", "user_info"),
     ("What team do I support?", "user_info"),
@@ -88,15 +85,26 @@ training_data = [
     ("What is the next game?", "next_fixture"),
     ("Show Chelsea's current fixtures", "next_fixture"),
     ("When does Brighton play next?", "next_fixture"),
+    ("When is our next game?", "next_fixture"),
+    ("When is our game?", "next_fixture"),
+    ("When do we play next?", "next_fixture"),
+    ("When is the next Liverpool match?", "next_fixture"),
+    ("When does my team play?", "next_fixture"),
 
     ("Show me Chelsea match results.", "last_fixture"),
-    ("What were Chelsea's last match results?", "last_fixture"),
-    ("Results for Liverpool's last game", "last_fixture"),
-    ("What was Arsenal's previous match?", "last_fixture"),
+    ("What were Chelsea last match results?", "last_fixture"),
+    ("Results for Liverpool last game", "last_fixture"),
+    ("What was Arsenal previous match?", "last_fixture"),
+    ("When was Arsenal last match?", "last_fixture"),
+    ("When was our last game?", "next_fixture"),
+
+    ("Show top scorers", "out_of_scope"),
+    ("Who is the best player?", "out_of_scope"),
+    ("What is the weather?", "out_of_scope"),
+    ("Tell me a joke", "out_of_scope"),
+    ("Show team logos", "out_of_scope"),
 
     ("My name is Wesley", "introduce_name"),
-    ("My name is Sarah", "introduce_name"),
-    ("My name is Robert", "introduce_name"),
     ("What is my name?", "user_info"),
     ("Call me Alice", "introduce_name"),
     ("I am John", "introduce_name"),
@@ -113,6 +121,12 @@ training_data = [
     ("Show me the fixtures for this season", "current_season"),
     ("What were the results in 2022?", "past_season"),
     ("Show results for last season", "past_season"),
+
+    ("Tell me about Chelsea matches", "ambiguous_query"),
+    ("What can you tell me about Liverpool?", "ambiguous_query"),
+    ("Arsenal info", "ambiguous_query"),
+    ("Show Chelsea", "ambiguous_query"),
+    ("Chelsea details", "ambiguous_query"),
 
     # Booking examples
     ("I want to book tickets for Chelsea vs Arsenal on 2024-12-15", "book_ticket"),
@@ -134,59 +148,25 @@ def preprocess_input(text):
     return text
 
 # Pipeline for intent classification
-# intent_pipeline = Pipeline([
-#     ('vectorizer', CountVectorizer()),
-#     ('tfidf', TfidfTransformer()),
-#     ('classifier', LogisticRegression())
-# ])
+intent_pipeline = Pipeline([
+    ('vectorizer', CountVectorizer()),
+    ('tfidf', TfidfTransformer()),
+    ('classifier', LogisticRegression())
+])
 
 # Train the intent classifier
-# intent_pipeline.fit(texts, labels)
+intent_pipeline.fit(texts, labels)
 
-def train_intent_classifier(data, labels):
-    """Train the intent classifier."""
-    # Split data into training and test sets
-    X_train, X_test, y_train, y_test = train_test_split(data, labels, stratify=labels, test_size=0.25, random_state=42)
+# Step 3: Train-test split and train the pipeline
+X_train, X_test, y_train, y_test = train_test_split(texts, labels, test_size=0.2, random_state=42)
+intent_pipeline.fit(X_train, y_train)
 
-    # Vectorize text using CountVectorizer and TF-IDF
-    stop_words = stopwords.words('english')
-    count_vect = CountVectorizer(stop_words=stop_words)
-    X_train_counts = count_vect.fit_transform(X_train)
-
-    tfidf_transformer = TfidfTransformer(use_idf=True, sublinear_tf=True)
-    X_train_tfidf = tfidf_transformer.fit_transform(X_train_counts)
-
-    # Train a Logistic Regression model
-    clf = LogisticRegression(random_state=0)
-    clf.fit(X_train_tfidf, y_train)
-
-    # Transform the test data
-    X_test_counts = count_vect.transform(X_test)
-    X_test_tfidf = tfidf_transformer.transform(X_test_counts)
-
-    # Make predictions and evaluate
-    predicted = clf.predict(X_test_tfidf)
-    print("Confusion Matrix:")
-    print(confusion_matrix(y_test, predicted))
-    print("Accuracy Score:")
-    print(accuracy_score(y_test, predicted))
-    print("F1 Score:")
-    print(f1_score(y_test, predicted, average='weighted'))
-
-    # Return the trained model and transformers
-    return clf, count_vect, tfidf_transformer
-
-# Train the intent classifier
-# intent_pipeline.fit(texts, labels)
-# Train the intent classifier
-clf, count_vect, tfidf_transformer = train_intent_classifier(texts, labels)
-
-# # Step 4: Evaluate the pipeline
-# y_pred = intent_pipeline.predict(X_test)
-# print("Classification Report:")
-# print(classification_report(y_test, y_pred))
-# print("Confusion Matrix:")
-# print(confusion_matrix(y_test, y_pred))
+# Step 4: Evaluate the pipeline
+y_pred = intent_pipeline.predict(X_test)
+print("Classification Report:")
+print(classification_report(y_test, y_pred, zero_division=0))
+print("Confusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
 
 def map_alias_to_team_name(alias):
     """Map a team alias to its full team name using the team_aliases dictionary."""
@@ -195,9 +175,21 @@ def map_alias_to_team_name(alias):
             return team
     return alias  # Return the alias as-is if no match is found
 
+
 def is_valid_team(team_name):
-    """Check if the team name or alias is in the team_aliases dictionary."""
-    return any(team_name.lower() in map(str.lower, aliases) for aliases in team_aliases.values()) or team_name in team_aliases
+    """Check if the team name or alias matches a valid Premier League team."""
+    team_name_lower = team_name.lower()
+
+    # Check against full team names (case-insensitive)
+    if team_name_lower in (team.lower() for team in team_aliases.keys()):
+        return True
+
+    # Check against aliases (case-insensitive)
+    for aliases in team_aliases.values():
+        if team_name_lower in map(str.lower, aliases):
+            return True
+
+    return False
 
 def search_event(event_name, season=None, query_type="both"):
     """Fetch match data between two teams for a given season."""
@@ -240,7 +232,7 @@ def extract_match_info(user_input):
     """Extract teams and optionally a year or date from user input."""
     # Normalize the input by removing booking-related phrases
     normalized_input = re.sub(
-        r'\b(i want to book|book|tickets?|for|on|match|game|play|fixtures?|results?|when did|when will|when does|the|show|find|recent|in|next|me)\b',
+        r'\b(i want to book|book|tickets?|for|on|match|game|play|when|what|fixtures?|results?|did|will|does|the|show|find|recent|in|last|previous|is|was|next|me)\b',
         '',
         user_input,
         flags=re.IGNORECASE
@@ -392,12 +384,55 @@ def handle_turn(user_input, state):
             if not team1:
                 return "I couldn't identify a team. Please specify valid team names like 'Chelsea' or 'Arsenal'."
 
-            if team1:
-                return f"the team is {team1}"
+            if not is_valid_team(team1):
+                return(f"ChatBot: {team1} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
 
-            # Update state with the identified team(s)
-            state.update({"team1": team1, "team2": team2 or None})
-            state["pending_task"] = "ask_for_date"
+            if team1 and not team2:
+                # Fetch the next fixture for the specified team
+                resolved_team = map_alias_to_team_name(team1)
+                team_id = get_team_id(resolved_team)
+                if team_id:
+                    next_fixture = get_next_fixture_by_id(team_id)
+                else:
+                    return f"I couldn't find any upcoming matches for {team1.replace('_', ' ')}. Please try again later."
+
+                # Update the state with fixture details
+                state.update({
+                    "team1": next_fixture['home'].replace(' ', '_'),
+                    "team2": next_fixture['away'].replace(' ', '_'),
+                    "date": next_fixture.get('date', 'Unknown'),
+                    "venue": next_fixture.get('venue', 'Unknown'),
+                    "pending_task": "confirm_next_match"
+                })
+
+                # Offer to book tickets for the next match
+                return (
+                    f"The next match for {team1.replace('_', ' ')} is:\n"
+                    f"{next_fixture['home']} vs {next_fixture['away']} on {next_fixture['date']} at {next_fixture['venue']}.\n"
+                    f"Would you like to book tickets for this match?"
+                )
+
+            state.update({"team1": team1, "team2": team2})
+            if not is_valid_team(team1):
+                return(f"ChatBot: {team1} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
+            elif not is_valid_team(team2):
+                return(f"ChatBot: {team2} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
+
+            event_name = f"{team1}_vs_{team2}"
+            next_match = search_event(event_name, query_type="future")
+
+            if next_match:
+                match = next_match[0]
+                state.update({
+                    "date": match.get('dateEvent', 'Unknown'),
+                    "venue": match.get('strVenue', 'Unknown'),
+                    "pending_task": "confirm_next_match"
+                })
+                return (f"{team1.replace('_', ' ')} and {team2.replace('_', ' ')} are next playing at "
+                        f"{state['venue']} on {state['date']}. Would you like to book these tickets?")
+            else:
+                state["pending_task"] = "ask_for_date"
+                return f"I couldn't find the next match for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')}. When is the match?"
 
             if team2:
                 return f"Got it! You want to book tickets for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')}. When is the match?"
@@ -437,7 +472,7 @@ def handle_turn(user_input, state):
                 return (f"Just to confirm, you want {num_tickets} {state['seating_type']} tickets for "
                         f"{state['team1'].replace('_', ' ')} vs {state['team2'].replace('_', ' ')} "
                         f"on {state['date']}. Is that correct?")
-            return "Please specify the number of tickets."
+            return "Please specify the number of tickets as a number."
 
         elif task == "confirm_booking":
             if "yes" in user_input_cleaned or "confirm" in user_input_cleaned:
@@ -456,10 +491,10 @@ def handle_turn(user_input, state):
                 print("Debug: Match Confirmed - Proceeding to Seating Selection")
                 return (
                     f"What seating type would you like (VIP or regular)?")
-            elif "no" in user_input_cleaned or "cancel" in user_input_cleaned:
-                state.clear()
-                print("Debug: Booking cancelled")
-                return "Your booking has been cancelled. Let me know if I can help with anything else!"
+            elif "no" in user_input_cleaned in user_input_cleaned:
+                state["pending_task"] = "ask_for_date"
+                print("Debug: Match Proceeding to Date")
+                return "Which date is the match on?"
             else:
                 return "Please confirm your booking by saying 'yes' or cancel by saying 'no'."
 
@@ -467,13 +502,7 @@ def handle_turn(user_input, state):
         return "Something went wrong. Can you start over?"
 
     # Step 2: Predict Intent if No Pending Task
-    try:
-        intent = clf.predict([user_input_cleaned])[0]  # Wrap the input to match the expected 2D array
-    except ValueError as e:
-        print(f"Debug: Error during prediction: {e}")
-        return "I couldn't process your input. Please try again."
-
-
+    intent = intent_pipeline.predict([user_input_cleaned])[0]
     state["current_intent"] = intent
     print(f"Debug: Predicted Intent: {intent}")
 
@@ -483,7 +512,11 @@ def handle_turn(user_input, state):
 
         if not team1:
             state["pending_task"] = "ask_for_teams"
-            return "I couldn't identify any teams. Please provide valid team names like 'Chelsea' or 'Chelsea vs Arsenal'."
+            return "Great! Which teams are you booking tickets for"
+
+        if not is_valid_team(team1):
+            print(f"ChatBot: {team1} is not a valid Premier League team.")
+            print(f"ChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
 
         if team1 and not team2:
             # Fetch the next fixture for the specified team
@@ -492,7 +525,7 @@ def handle_turn(user_input, state):
             if team_id:
                 next_fixture = get_next_fixture_by_id(team_id)
             else:
-                return f"I couldn't find any upcoming matches for {team1.replace('_', ' ')}. Please try again later."
+                return f"I couldn't identify any teams. Please provide valid team names like 'Chelsea' or 'Chelsea vs Arsenal'."
 
             # Update the state with fixture details
             state.update({
@@ -512,6 +545,12 @@ def handle_turn(user_input, state):
 
         # Fetch the next match for two teams
         state.update({"team1": team1, "team2": team2})
+        if not is_valid_team(team1):
+            return (f"ChatBot: {team1} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(
+                    team_aliases.keys()))
+        elif not is_valid_team(team2):
+            return (f"ChatBot: {team2} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(
+                    team_aliases.keys()))
         event_name = f"{team1}_vs_{team2}"
         next_match = search_event(event_name, query_type="future")
 
@@ -580,22 +619,32 @@ def chatbot():
         # Predict the intent
         user_input_cleaned = preprocess_input(user_input)
         if "what is my name" in user_input_cleaned:
-            intent = "user_name"
+            intent = "user_info"
         elif "my name is" in user_input_cleaned:
             intent = "introduce_name"
+        # Check for "our" in the input and replace with the user's favorite team
+        elif "our" in user_input_cleaned:
+            if user_name and user_name in user_database:
+                favourite_team = user_database[user_name].get("team", None)
+                if favourite_team:
+                    user_input = user_input.replace("our", favourite_team.lower())
+                    user_input_cleaned = user_input_cleaned.replace("our", favourite_team.lower())
+                    print(f"Debug: Replaced 'our' with '{favourite_team}' in user input.")
+
+                    # Determine intent explicitly
+                    if "next" in user_input_cleaned or "upcoming" in user_input_cleaned:
+                        intent = "next_fixture"
+                    elif "last" in user_input_cleaned or "previous" in user_input_cleaned:
+                        intent = "last_fixture"
+                    else:
+                        # Default to ambiguous query for general "our" use cases
+                        intent = "ambiguous_query"
+            else:
+                print("ChatBot: I don't know who 'our' refers to.")
+                intent = "user_info"
         else:
-            try:
-                # Vectorize and transform the user input
-                user_input_counts = count_vect.transform([user_input_cleaned])
-                user_input_tfidf = tfidf_transformer.transform(user_input_counts)
-
-                # Predict using the trained classifier
-                intent = clf.predict(user_input_tfidf)[0]
-            except ValueError as e:
-                print(f"Debug: Error during prediction: {e}")
-                continue
-
-        print(f"Debug: Predicted Intent: {intent}")
+            intent = intent_pipeline.predict([user_input_cleaned])[0]
+            print(f"Debug: Predicted Intent: {intent}")
         handled = False  # Tracks whether the intent was successfully handled
 
         # Determine query type based on user input
@@ -604,10 +653,6 @@ def chatbot():
             query_type = "past"
         elif "when will" in user_input_cleaned:
             query_type = "future"
-        elif "what is my name" in user_input_cleaned:
-            intent == "user_name"
-        elif "my name is" in user_input_cleaned:
-            intent == "introduce_name"
 
         if intent == "introduce_name":
             name_match = re.search(r"my name is (\w+)|call me (\w+)|i am (\w+)|i go by (\w+)", user_input_cleaned,
@@ -624,10 +669,10 @@ def chatbot():
                         if is_valid_team(favourite_team):
                             resolved_team = map_alias_to_team_name(favourite_team)
                             user_database[user_name] = {"team": resolved_team}
-                            print(f"Got it. You are now a fan of {resolved_team}. You can now ask:\n"
-                                  f"• 'When does {resolved_team} play next?'\n"
-                                  f"• 'Show me {resolved_team} match results.'\n"
-                                  f"• 'Book tickets for {resolved_team} next match.'")
+                            print(f"ChatBot: Got it. You are now a fan of {resolved_team}. You can now ask:\n"
+                                  f"    • 'When does {resolved_team} play next?'\n"
+                                  f"    • 'Show me {resolved_team} match results.'\n"
+                                  f"    • 'Book tickets for {resolved_team} next match.'")
                             break
                         else:
                             print(
@@ -659,17 +704,16 @@ def chatbot():
             team1, _, _ = extract_match_info(user_input_cleaned)
 
             if not team1:
-                return "I couldn't identify a team. Please specify a valid team name like 'Arsenal' or 'Chelsea'."
+                return "ChatBot: I couldn't identify a team. Please specify a valid team name like 'Arsenal' or 'Chelsea'."
 
             # Fetch the next fixture for the specified team
             team_id = get_team_id(team1)
             if team_id:
                 next_fixture = get_next_fixture_by_id(team_id)
                 if next_fixture:
-                    print(f"The next match for {team1.replace('_', ' ')} is:")
-                    print(f"  {next_fixture['home']} vs {next_fixture['away']} on {next_fixture['date']} at {next_fixture['venue']}.")
-                    print(f"  League: {next_fixture['league']}")
-                    print(f"  Time: {next_fixture['time']}")
+                    print(f"ChatBot: {next_fixture['home']}'s next fixture is against {next_fixture['away']} in the {next_fixture['league']}. It's being played at {next_fixture['venue']} on {next_fixture['date']} at {next_fixture['time']}.")
+                    print(f"ChatBot: By the way, I can also help you find {next_fixture['home']}’s last match. Type 'When was {next_fixture['home']} last game?'.”")
+
                 else:
                     print(f"ChatBot: Sorry, I couldn't find any upcoming fixtures for {team1.replace('_', ' ')}.")
             else:
@@ -681,20 +725,20 @@ def chatbot():
             # Extract the team name from user input
             team1, _, _ = extract_match_info(user_input_cleaned)
 
+            if not is_valid_team(team1):
+                print("ChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
+
+
             if not team1:
-                return "I couldn't identify a team. Please specify a valid team name like 'Arsenal' or 'Chelsea'."
+                return "ChatBot: I couldn't identify a team. Please specify a valid team name like 'Arsenal' or 'Chelsea'."
 
             # Fetch the last fixture for the specified team
             team_id = get_team_id(team1)
             if team_id:
                 last_fixture = get_last_fixture_by_id(team_id)
                 if last_fixture:
-                    print(f"The last match for {team1.replace('_', ' ')} is:")
-                    print(f"  {last_fixture['home']} vs {last_fixture['away']}")
-                    print(f"  Date: {last_fixture['date']} at {last_fixture['time']}")
-                    print(f"  Score: {last_fixture['intHomeScore']} - {last_fixture['intAwayScore']}")
-                    print(f"  Venue: {last_fixture['venue']}")
-                    print(f"  League: {last_fixture['league']}")
+                    print(f"ChatBot: {last_fixture['home']} last played {last_fixture['away']} on {last_fixture['date']} at {last_fixture['time']} and the score was {last_fixture['intHomeScore']} - {last_fixture['intAwayScore']}.")
+                    print(f"ChatBot: By the way, I can also help you find {last_fixture['home']}’s upcoming game. Type 'When is {last_fixture['home']} next game?'.”")
                 else:
                     print(f"ChatBot: Sorry, I couldn't find any upcoming fixtures for {team1.replace('_', ' ')}.")
             else:
@@ -707,30 +751,47 @@ def chatbot():
             team1, team2, season = extract_match_info(user_input_cleaned)
             print(f"Debug: Extracted Team1: {team1}, Team2: {team2}, Season: {season}")
             if team1 and team2:
-                team1 = map_alias_to_team_name(team1).replace(" ", "_")
-                team2 = map_alias_to_team_name(team2).replace(" ", "_")
-                event_name = f"{team1}_vs_{team2}"
-                events = search_event(event_name, season, query_type)
+                if is_valid_team(team1) and is_valid_team(team2):
+                    team1 = map_alias_to_team_name(team1).replace(" ", "_")
+                    team2 = map_alias_to_team_name(team2).replace(" ", "_")
+                    event_name = f"{team1}_vs_{team2}"
+                    events = search_event(event_name, season, query_type)
 
-                if events:
-                    print(
-                        f"\nChatBot: Here are the results for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')}:")
-                    for event in events:
-                        print(f"- Date: {event.get('dateEvent', 'Unknown')}")
-                        print(f"  {event.get('strHomeTeam', 'Unknown')} vs {event.get('strAwayTeam', 'Unknown')}")
-                        print(f"  Score: {event.get('intHomeScore', 'N/A')} - {event.get('intAwayScore', 'N/A')}")
-                        print(f"  Venue: {event.get('strVenue', 'Unknown')}")
-                        print(f"  League: {event.get('strLeague', 'Unknown')}\n")
+                    if events:
+                        print(
+                            f"\nChatBot: Here are the results for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')}:")
+                        for event in events:
+                            print(f"- Date: {event.get('dateEvent', 'Unknown')}")
+                            print(f"  {event.get('strHomeTeam', 'Unknown')} vs {event.get('strAwayTeam', 'Unknown')}")
+                            print(f"  Score: {event.get('intHomeScore', 'N/A')} - {event.get('intAwayScore', 'N/A')}")
+                            print(f"  Venue: {event.get('strVenue', 'Unknown')}")
+                            print(f"  League: {event.get('strLeague', 'Unknown')}\n")
+                    else:
+                        print(
+                            f"ChatBot: No matches found for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')} in {season if season else 'current season'}.")
                 else:
                     print(
-                        f"ChatBot: No matches found for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')} in {season if season else 'current season'}.")
+                        "ChatBot: Please specify two valid Premier League teams from the following: " + ", ".join(
+                            team_aliases.keys()))
             else:
                 print("ChatBot: Please provide input in 'team1 vs team2' or 'team1 vs team2 in year' format.")
             handled = True
 
+        if intent == "ambiguous_query" and not handled:
+            print(f"ChatBot: Do you want recent results, upcoming fixtures, or ticket information? Please specify so I can assist you better.")
+            handled = True
+
+        if intent == "out_of_scope" and not handled:
+            print(f"ChatBot: I can’t provide player stats or unrelated information. Try asking about match results, fixtures, or ticket bookings. How can I assist you?" )
+            handled = True
+
         # Fallback for unhandled intents
         if not handled:
-            print("ChatBot: I didn't understand that. Try asking about matches, fixtures, or your name.")
+            print("ChatBot: I can assist with match results, fixtures, and ticket bookings. Try asking:")
+            print("         •	‘Brighton vs Manchester United’")
+            print("         •	‘Book tickets for Chelsea vs Wolves.’")
+            print("         •	‘When does Liverpool play next?’")
+
 
             # Debug: Print intent for verification
         print(f"Debug: Current State: {state}")
