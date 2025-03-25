@@ -5,15 +5,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report, confusion_matrix
-
 from dateutil.parser import parse
-import joblib
 
+# User database to store user information
 user_database = {
     "wesley": {"team": "Chelsea"}
 }
 
-# Expanded dictionary with Premier League team aliases
+# Dictionary with Premier League team aliases for normalisation
 team_aliases = {
     "Manchester United": ["Man U", "Man Utd", "United", "Manchester U"],
     "Manchester City": ["Man City", "City", "MCFC"],
@@ -37,6 +36,7 @@ team_aliases = {
     "Bournemouth": ["Cherries", "AFC Bournemouth"]
 }
 
+# State dictionary to manage the current interaction
 dialogue_state = {
     "current_intent": None,
     "team1": None,
@@ -52,6 +52,7 @@ dialogue_state = {
 training_data = [
     ("Chelsea vs Arsenal", "current_season"),
     ("Man Utd vs Liverpool", "current_season"),
+    ("Manchester United vs Aston Villa", "current_season"),
     ("Chelsea vs Arsenal in 2023", "past_season"),
     ("Scores of the Chelsea vs Arsenal game", "current_season"),
     ("Scores for the Chelsea vs Arsenal game", "current_season"),
@@ -96,13 +97,22 @@ training_data = [
     ("Results for Liverpool last game", "last_fixture"),
     ("What was Arsenal previous match?", "last_fixture"),
     ("When was Arsenal last match?", "last_fixture"),
-    ("When was our last game?", "next_fixture"),
+    ("When was villa last game?", "last_fixture"),
+    ("When did Villa last play", "last_fixture"),
+    ("When was our last game?", "last_fixture"),
 
     ("Show top scorers", "out_of_scope"),
+    ("Show player stats.", "out_of_scope"),
     ("Who is the best player?", "out_of_scope"),
     ("What is the weather?", "out_of_scope"),
     ("Tell me a joke", "out_of_scope"),
     ("Show team logos", "out_of_scope"),
+
+    ("Tell me about Chelsea matches", "ambiguous_query"),
+    ("What can you tell me about Liverpool?", "ambiguous_query"),
+    ("Arsenal info", "ambiguous_query"),
+    ("Show Chelsea", "ambiguous_query"),
+    ("Chelsea details", "ambiguous_query"),
 
     ("My name is Wesley", "introduce_name"),
     ("What is my name?", "user_info"),
@@ -122,12 +132,6 @@ training_data = [
     ("What were the results in 2022?", "past_season"),
     ("Show results for last season", "past_season"),
 
-    ("Tell me about Chelsea matches", "ambiguous_query"),
-    ("What can you tell me about Liverpool?", "ambiguous_query"),
-    ("Arsenal info", "ambiguous_query"),
-    ("Show Chelsea", "ambiguous_query"),
-    ("Chelsea details", "ambiguous_query"),
-
     # Booking examples
     ("I want to book tickets for Chelsea vs Arsenal on 2024-12-15", "book_ticket"),
     ("Book tickets for Liverpool vs Manchester United", "book_ticket"),
@@ -137,12 +141,10 @@ training_data = [
     ("Buy tickets for Chelsea game", "book_ticket"),
     ("I want to book a match ticket for Liverpool", "book_ticket")
 ]
-
 texts, labels = zip(*training_data)
 
-# Preprocess function
+# Preprocess function to clean user input
 def preprocess_input(text):
-    """Preprocess input text by converting to lowercase and removing unnecessary punctuation."""
     text = text.lower().strip()
     text = re.sub(r'[^\w\s]', '', text)
     return text
@@ -157,56 +159,60 @@ intent_pipeline = Pipeline([
 # Train the intent classifier
 intent_pipeline.fit(texts, labels)
 
-# Step 3: Train-test split and train the pipeline
+# Train-test split to evaluate the model
 X_train, X_test, y_train, y_test = train_test_split(texts, labels, test_size=0.2, random_state=42)
 intent_pipeline.fit(X_train, y_train)
 
-# Step 4: Evaluate the pipeline
+# Evaluate the pipeline
 y_pred = intent_pipeline.predict(X_test)
-print("Classification Report:")
-print(classification_report(y_test, y_pred, zero_division=0))
-print("Confusion Matrix:")
-print(confusion_matrix(y_test, y_pred))
 
+# Function to map team aliases to their official names
 def map_alias_to_team_name(alias):
-    """Map a team alias to its full team name using the team_aliases dictionary."""
+
     for team, aliases in team_aliases.items():
         if alias.lower() in map(str.lower, aliases):  # Match aliases case-insensitively
             return team
     return alias  # Return the alias as-is if no match is found
 
-
+# Function to validate team names
 def is_valid_team(team_name):
-    """Check if the team name or alias matches a valid Premier League team."""
-    team_name_lower = team_name.lower()
+
+    # Replace underscores with spaces and normalize
+    team_name = team_name.strip().lower()
+    resolved_name = team_name.replace('_', ' ')
+    # Debugging: Log what is being checked
+    # print(f"Debug: Validating team '{team_name}' and '{resolved_name}'")
 
     # Check against full team names (case-insensitive)
-    if team_name_lower in (team.lower() for team in team_aliases.keys()):
+    if resolved_name in (team.lower().replace('_', ' ').strip() for team in team_aliases.keys()):
+        # print("Debug: Matched with full team name.")
         return True
 
     # Check against aliases (case-insensitive)
-    for aliases in team_aliases.values():
-        if team_name_lower in map(str.lower, aliases):
+    for team, aliases in team_aliases.items():
+        if team_name in map(str.lower, aliases):
+            # print(f"Debug: Matched with alias of '{team}'.")
             return True
 
+    # print("Debug: No match found.")
     return False
 
+# Fetch match data between two teams for a given season using TheSportsDB API.
 def search_event(event_name, season=None, query_type="both"):
-    """Fetch match data between two teams for a given season."""
-    api_key = '771766'  # Replace with your actual API key
+    api_key = '771766'
     base_url = f'https://www.thesportsdb.com/api/v1/json/{api_key}/searchevents.php'
 
+    # Function to fetch events from the API
     def fetch_events(event_name, season):
         params = {'e': event_name, 's': season} if season else {'e': event_name}
         response_url = f"{base_url}?e={event_name}&s={season}"  # Debug URL
-        print(f"Debug: Fetching events from URL: {response_url}")
 
         response = requests.get(base_url, params=params)
         if response.status_code == 200:
             data = response.json()
             return data.get('event', []) or []
         else:
-            print(f"Debug: Failed to fetch events, status code: {response.status_code}")
+            print(f"ChatBot: Failed to fetch events, status code: {response.status_code}")
             return []
 
     # Properly formatted event names
@@ -228,11 +234,10 @@ def search_event(event_name, season=None, query_type="both"):
     else:  # Return both past and future events
         return sorted_events[:2] if not season else sorted_events
 
+# Function to extract match details (teams and date/season)
 def extract_match_info(user_input):
-    """Extract teams and optionally a year or date from user input."""
-    # Normalize the input by removing booking-related phrases
     normalized_input = re.sub(
-        r'\b(i want to book|book|tickets?|for|on|match|game|play|when|what|fixtures?|results?|did|will|does|the|show|find|recent|in|last|previous|is|was|next|me)\b',
+        r'\b(i want to book|book|tickets?|for|on|match|game|play|when|what|fixtures?|results?|did|will|were|of|does|the|show|find|recent|in|last|previous|is|was|next|me)\b',
         '',
         user_input,
         flags=re.IGNORECASE
@@ -260,7 +265,7 @@ def extract_match_info(user_input):
     normalized_input = normalized_input.replace(" and ", " vs ")
     normalized_input = normalized_input.replace(" play ", " vs ")
 
-    # Extract team names from the remaining input
+    # Extract team names
     team1, team2 = None, None
     match_teams = re.search(r'(.+?)\s+vs\s+(.+)', normalized_input, re.IGNORECASE)
 
@@ -276,8 +281,8 @@ def extract_match_info(user_input):
 
     return team1, team2, extracted_date or season
 
+# Detect if the user is providing their name or asking about their stored name.
 def detect_name_statement(user_input):
-    """Detect if the user is providing their name or asking about their stored name."""
     name_pattern = re.search(r"(?:my name is|call me)\s+([a-zA-Z]+)", user_input, re.IGNORECASE)
     if name_pattern:
         return name_pattern.group(1).strip()  # Return the detected name
@@ -285,12 +290,10 @@ def detect_name_statement(user_input):
         return "retrieve_name"  # Indicate a request to retrieve the name
     return None
 
-
+# Fetch the team ID for a given team name using TheSportsDB API.
 def get_team_id(team_name):
-    """Fetch the team ID for a given team name."""
-    # Resolve the alias to the official team name
     resolved_name = map_alias_to_team_name(team_name)
-    api_key = '771766'  # Replace with your actual API key
+    api_key = '771766'
     base_url = f'https://www.thesportsdb.com/api/v1/json/{api_key}/searchteams.php'
     response = requests.get(base_url, params={"t": resolved_name})
 
@@ -301,28 +304,18 @@ def get_team_id(team_name):
             return teams[0].get('idTeam', None)  # Return the first match's idTeam
     return None
 
+# Fetch the next fixture for a team using the team ID.
 def get_next_fixture_by_id(team_id):
-    """Fetch the next fixture for a team using the team ID."""
-    api_key = '771766'  # Replace with your actual API key
+    api_key = '771766'
     base_url = f'https://www.thesportsdb.com/api/v1/json/{api_key}/eventsnext.php'
-
     response = requests.get(base_url, params={"id": team_id})
 
     if response.status_code == 200:
-        try:
-            data = response.json()
-            events = data.get('events', [])
-            print(f"Debug: API Response Events: {events}")  # Debug the events array
+        data = response.json()
+        events = data.get('events', [])
 
-            if not events or not isinstance(events, list):
-                print("Debug: No valid events returned from the API.")
-                return None
-
+        if events:
             next_event = events[0]
-            if not isinstance(next_event, dict):
-                print(f"Error: Expected next_event to be a dict, got {type(next_event)} instead.")
-                return None
-
             return {
                 "home": next_event.get('strHomeTeam', 'Unknown'),
                 "away": next_event.get('strAwayTeam', 'Unknown'),
@@ -331,15 +324,11 @@ def get_next_fixture_by_id(team_id):
                 "league": next_event.get('strLeague', 'Unknown'),
                 "time": next_event.get('strTime', 'Unknown')
             }
-        except ValueError as e:
-            print(f"Error parsing JSON response: {e}")
-    else:
-        print(f"Debug: API Request failed with status {response.status_code}")
     return None
 
+# Fetch the last fixture for a team using the team ID.
 def get_last_fixture_by_id(team_id):
-    """Fetch the last fixture for a team using the team ID."""
-    api_key = '771766'  # Replace with your actual API key
+    api_key = '771766'
     base_url = f'https://www.thesportsdb.com/api/v1/json/{api_key}/eventslast.php'
     response = requests.get(base_url, params={"id": team_id})
 
@@ -360,23 +349,19 @@ def get_last_fixture_by_id(team_id):
             }
     return None
 
-
+# Handle a single turn of the conversation based on user input and state.
 def handle_turn(user_input, state):
-    """Handle a single turn of the conversation."""
     # Preprocess input
     user_input_cleaned = preprocess_input(user_input)
-    print(f"Debug: Current State Before Processing: {state}")
-    print(f"Debug: Cleaned User Input: {user_input_cleaned}")
 
     # Check for exit or cancel command
     if user_input_cleaned in ["exit", "cancel"]:
         state.clear()
         return "Transaction cancelled. Let me know if you need help with anything else!"
 
-    # Step 1: Handle Pending Task if Active
+    # Handle pending tasks in the conversation flow
     if state.get("pending_task"):
         task = state["pending_task"]
-        print(f"Debug: Handling Pending Task: {task}")
 
         if task == "ask_for_teams":
             team1, team2, _ = extract_match_info(user_input_cleaned)
@@ -384,8 +369,8 @@ def handle_turn(user_input, state):
             if not team1:
                 return "I couldn't identify a team. Please specify valid team names like 'Chelsea' or 'Arsenal'."
 
-            if not is_valid_team(team1):
-                return(f"ChatBot: {team1} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
+            # if not is_valid_team(team1):
+            #     return(f"ChatBot: {team1} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
 
             if team1 and not team2:
                 # Fetch the next fixture for the specified team
@@ -412,11 +397,12 @@ def handle_turn(user_input, state):
                     f"Would you like to book tickets for this match?"
                 )
 
-            state.update({"team1": team1, "team2": team2})
+
             if not is_valid_team(team1):
                 return(f"ChatBot: {team1} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
             elif not is_valid_team(team2):
                 return(f"ChatBot: {team2} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(team_aliases.keys()))
+            state.update({"team1": team1, "team2": team2})
 
             event_name = f"{team1}_vs_{team2}"
             next_match = search_event(event_name, query_type="future")
@@ -444,7 +430,6 @@ def handle_turn(user_input, state):
                 parsed_date = parse(user_input_cleaned, fuzzy=True).strftime('%Y-%m-%d')
                 state["date"] = parsed_date
                 state["pending_task"] = "ask_for_seating"
-                print(f"Debug: Date Parsed Successfully: {parsed_date}")
                 return (
                     f"Tickets are available for {state['team1'].replace('_', ' ')} vs {state['team2'].replace('_', ' ')} "
                     f"on {parsed_date}. What seating type would you like (VIP or regular)?")
@@ -459,7 +444,6 @@ def handle_turn(user_input, state):
             if seating_type:
                 state["seating_type"] = seating_type
                 state["pending_task"] = "ask_for_num_tickets"
-                print(f"Debug: Seating Type Selected: {seating_type}")
                 return f"How many {seating_type} tickets would you like?"
             return "Please specify a seating type (VIP or regular)."
 
@@ -468,7 +452,6 @@ def handle_turn(user_input, state):
             if num_tickets:
                 state["num_tickets"] = num_tickets
                 state["pending_task"] = "confirm_booking"
-                print(f"Debug: Number of Tickets Selected: {num_tickets}")
                 return (f"Just to confirm, you want {num_tickets} {state['seating_type']} tickets for "
                         f"{state['team1'].replace('_', ' ')} vs {state['team2'].replace('_', ' ')} "
                         f"on {state['date']}. Is that correct?")
@@ -477,34 +460,27 @@ def handle_turn(user_input, state):
         elif task == "confirm_booking":
             if "yes" in user_input_cleaned or "confirm" in user_input_cleaned:
                 state.clear()
-                print("Debug: Booking Confirmed")
                 return "Great! Your booking is confirmed. You will receive your tickets via email. Enjoy the match!"
             elif "no" in user_input_cleaned or "cancel" in user_input_cleaned:
                 state.clear()
-                print("Debug: Booking cancelled")
                 return "Your booking has been cancelled."
             return "Please confirm your booking by saying 'yes' or cancel by saying 'no'."
 
         elif task == "confirm_next_match":
             if "yes" in user_input_cleaned or "confirm" in user_input_cleaned:
                 state["pending_task"] = "ask_for_seating"
-                print("Debug: Match Confirmed - Proceeding to Seating Selection")
                 return (
                     f"What seating type would you like (VIP or regular)?")
             elif "no" in user_input_cleaned in user_input_cleaned:
                 state["pending_task"] = "ask_for_date"
-                print("Debug: Match Proceeding to Date")
                 return "Which date is the match on?"
             else:
                 return "Please confirm your booking by saying 'yes' or cancel by saying 'no'."
-
-        print(f"Debug: Unrecognized Pending Task: {task}")
         return "Something went wrong. Can you start over?"
 
-    # Step 2: Predict Intent if No Pending Task
+    # Predict Intent if No Pending Task
     intent = intent_pipeline.predict([user_input_cleaned])[0]
     state["current_intent"] = intent
-    print(f"Debug: Predicted Intent: {intent}")
 
     if intent == "book_ticket":
         # Extract match details
@@ -544,13 +520,14 @@ def handle_turn(user_input, state):
             )
 
         # Fetch the next match for two teams
-        state.update({"team1": team1, "team2": team2})
+
         if not is_valid_team(team1):
             return (f"ChatBot: {team1} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(
                     team_aliases.keys()))
         elif not is_valid_team(team2):
             return (f"ChatBot: {team2} is not a valid Premier League team.\nChatBot: Please specify a valid Premier League team from the following: " + ", ".join(
                     team_aliases.keys()))
+        state.update({"team1": team1, "team2": team2})
         event_name = f"{team1}_vs_{team2}"
         next_match = search_event(event_name, query_type="future")
 
@@ -567,37 +544,56 @@ def handle_turn(user_input, state):
             state["pending_task"] = "ask_for_date"
             return f"I couldn't find the next match for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')}. When is the match?"
 
-    # Step 3: Fallback for Unrecognized Input
+    # Fallback for Unrecognized Input
     return "I didn't understand that. Can you rephrase?"
 
-# Helper functions
+# Extract seating type (VIP or regular) from user input.
 def extract_seating_type(user_input):
-    """Extract seating type from user input."""
     if "vip" in user_input.lower():
         return "VIP"
     elif "regular" in user_input.lower():
         return "regular"
     return None
 
-
+# Extract the number of tickets requested from user input.
 def extract_num_tickets(user_input):
-    """Extract number of tickets from user input."""
     match = re.search(r'\b(\d+)\b', user_input)  # Match any number in the input
     return int(match.group(1)) if match else None
 
-def check_ticket_availability(team1, team2, date):
-    """Simulate checking ticket availability."""
-    # For simplicity, assume all tickets are available
-    return True
+#Handle Small Talk
+def small_talk(user_input):
+    user_input = user_input.lower().strip()
 
-# Chatbot function with intents
+    # Small talk responses
+    greetings = ["hello", "hi", "hey", "good morning", "good afternoon", "good evening"]
+    farewells = ["bye", "goodbye", "see you", "take care"]
+    how_are_you = ["how are you", "how are you doing"]
+    thanks = ["thank you", "thanks", "appreciate it"]
+    weather = ["how's the weather", "what's the weather like"]
+
+    # Match user input to categories
+    if any(greet in user_input for greet in greetings):
+        return "Hello! How can I assist you today?"
+    elif any(farewell in user_input for farewell in farewells):
+        return "Goodbye! Have a great day!"
+    elif any(how in user_input for how in how_are_you):
+        return "I'm just a chatbot, but I'm here to help! How can I assist you?"
+    elif any(ty in user_input for ty in thanks):
+        return "You're welcome! Let me know if there's anything else I can help with."
+    elif any(w in user_input for w in weather):
+        return "I can't check the weather right now, but it's always a good day to talk about football!"
+
+    # Default response if no match
+    return "I didn't quite catch that. Can you rephrase or let me know how I can assist?"
+
+# Chatbot function to handle user interactions
 def chatbot():
-    """Main chatbot function to handle user queries."""
     print(f"Welcome to the Premier League Interactive NLP-based AI! I can help you with the following:")
     print(f"•	Find match results for your favourite teams. Try 'Wolves vs Crystal Palace in 2021'")
     print(f"•	Check upcoming fixtures. Try 'Chelsea vs Arsenal'")
     print(f"•	Book tickets for matches. Try 'I want to book tickets for Brighton vs Aston Villa'")
     print(f"You can start by introducing yourself or asking about a match. How can I assist you today?")
+
     user_name = None
     state = {}
 
@@ -607,16 +603,19 @@ def chatbot():
             print("ChatBot: Goodbye!")
             break
 
-        # If state is not empty, stay in the transaction flow
+        # Handle small talk
+        response = small_talk(user_input)
+        if response != "I didn't quite catch that. Can you rephrase or let me know how I can assist?":
+            print(f"ChatBot: {response}")
+            continue
+
+        # Process the user input
         if state:
             response = handle_turn(user_input, state)
             print(f"ChatBot: {response}")
-
-            # Debugging: Show state after processing
-            print(f"Debug: Current State: {state}")
             continue
 
-        # Predict the intent
+        # Predict intent for new interactions
         user_input_cleaned = preprocess_input(user_input)
         if "what is my name" in user_input_cleaned:
             intent = "user_info"
@@ -629,7 +628,6 @@ def chatbot():
                 if favourite_team:
                     user_input = user_input.replace("our", favourite_team.lower())
                     user_input_cleaned = user_input_cleaned.replace("our", favourite_team.lower())
-                    print(f"Debug: Replaced 'our' with '{favourite_team}' in user input.")
 
                     # Determine intent explicitly
                     if "next" in user_input_cleaned or "upcoming" in user_input_cleaned:
@@ -644,7 +642,6 @@ def chatbot():
                 intent = "user_info"
         else:
             intent = intent_pipeline.predict([user_input_cleaned])[0]
-            print(f"Debug: Predicted Intent: {intent}")
         handled = False  # Tracks whether the intent was successfully handled
 
         # Determine query type based on user input
@@ -689,16 +686,15 @@ def chatbot():
                 print(f"ChatBot: Your name is {user_name}, and your favourite team is {favourite_team}.")
             handled = True
 
-                # Booking Intent
+
         if intent == "book_ticket":
             response = handle_turn(user_input, state)
             print(f"ChatBot: {response}")
             handled = True
-            print(f"Debug: Current State: {state}")
             continue
 
 
-        # Handle next_fixture intent
+
         if intent == "next_fixture" and not handled:
             # Extract the team name from user input
             team1, _, _ = extract_match_info(user_input_cleaned)
@@ -749,9 +745,17 @@ def chatbot():
         # Handle match-related queries
         if intent in ["current_season", "past_season"] and not handled:
             team1, team2, season = extract_match_info(user_input_cleaned)
-            print(f"Debug: Extracted Team1: {team1}, Team2: {team2}, Season: {season}")
             if team1 and team2:
-                if is_valid_team(team1) and is_valid_team(team2):
+                if not is_valid_team(team1):
+                    print(
+                        f"ChatBot: I didn’t catch the first team '{team1.replace('_', ' ')}'\nPlease specify a valid Premier League team from the following: " + ", ".join(
+                            team_aliases.keys()))
+                elif not is_valid_team(team2):
+                    print(
+                        f"ChatBot: I didn’t catch the second team '{team2.replace('_', ' ')}'\nPlease specify a valid Premier League team from the following: " + ", ".join(
+                            team_aliases.keys()))
+                else:
+                    print(f"intent = {intent}")
                     team1 = map_alias_to_team_name(team1).replace(" ", "_")
                     team2 = map_alias_to_team_name(team2).replace(" ", "_")
                     event_name = f"{team1}_vs_{team2}"
@@ -769,12 +773,11 @@ def chatbot():
                     else:
                         print(
                             f"ChatBot: No matches found for {team1.replace('_', ' ')} vs {team2.replace('_', ' ')} in {season if season else 'current season'}.")
-                else:
-                    print(
-                        "ChatBot: Please specify two valid Premier League teams from the following: " + ", ".join(
-                            team_aliases.keys()))
             else:
-                print("ChatBot: Please provide input in 'team1 vs team2' or 'team1 vs team2 in year' format.")
+                print("ChatBot: I can assist with match results, fixtures, and ticket bookings. Try asking:")
+                print("         •	‘Brighton vs Manchester United’")
+                print("         •	‘Book tickets for Chelsea vs Wolves.’")
+                print("         •	‘When does Liverpool play next?’")
             handled = True
 
         if intent == "ambiguous_query" and not handled:
@@ -791,12 +794,6 @@ def chatbot():
             print("         •	‘Brighton vs Manchester United’")
             print("         •	‘Book tickets for Chelsea vs Wolves.’")
             print("         •	‘When does Liverpool play next?’")
-
-
-            # Debug: Print intent for verification
-        print(f"Debug: Current State: {state}")
-        print(f"Debug: Cleaned User Input: '{user_input_cleaned}'")
-        print(f"Debug: User Input: '{user_input}' - Predicted Intent: '{intent}'")
 
 # Example usage
 if __name__ == "__main__":
